@@ -1,0 +1,49 @@
+@page {
+  size: 16in 9in;
+  margin: 0;
+}
+
+html,
+body {
+  width: 1600px;
+  height: 900px;
+  overflow: visible;
+  background: white;
+}
+
+.ambient,
+.hud,
+.progress,
+.toc,
+.appendix-dialog,
+.appendix-trigger,
+.more-count {
+  display: none !important;
+}
+
+.deck-shell,
+.stage {
+  position: static !important;
+  width: 1600px !important;
+  height: auto !important;
+  transform: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+.slide {
+  position: relative !important;
+  display: block !important;
+  width: 1600px !important;
+  height: 900px !important;
+  break-after: page;
+  page-break-after: always;
+  opacity: 1 !important;
+  animation: none !important;
+}
+
+.slide * {
+  animation: none !important;
+  opacity: 1 !important;
+}
