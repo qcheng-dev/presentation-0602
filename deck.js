@@ -3,8 +3,6 @@ const stage = document.getElementById("stage");
 const currentEl = document.getElementById("current");
 const progressBar = document.getElementById("progressBar");
 const toc = document.getElementById("toc");
-const appendixDialog = document.getElementById("appendixDialog");
-const appendixBody = document.getElementById("appendixBody");
 let index = 0;
 
 function esc(text) {
@@ -48,26 +46,68 @@ function bullets(slide) {
 
 function imageItems(slide) {
   if (Array.isArray(slide.images) && slide.images.length) {
-    return slide.images.slice(0, slide.kind === "visual" ? 2 : 1);
+    return slide.images.slice(0, 6);
   }
   return slide.elements
     .filter((item) => item.type === "image")
     .filter((item) => {
       const ratio = item.w / Math.max(item.h, 1);
-      return item.w * item.h > 18000 && ratio > 0.22 && ratio < 4.8;
+      return item.w * item.h > 18000 && ratio > 0.18 && ratio < 8.0;
     })
     .sort((a, b) => (b.w * b.h) - (a.w * a.h))
-    .slice(0, slide.kind === "visual" ? 2 : 1);
+    .slice(0, 6);
 }
 
-function openAppendix(slideIndex) {
-  const slide = slides[slideIndex];
-  const items = textItems(slide);
-  appendixBody.innerHTML = `<h2>${esc(slide.title)}</h2>
-    <p class="appendix-kicker">原始提取内容 / Speaker notes</p>
-    <ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>
-    <pre>${esc(slide.notes || "")}</pre>`;
-  appendixDialog.showModal();
+function compactText(text, maxLength = 54) {
+  let value = normalize(text)
+    .replace(/^核心问题：\s*/, "")
+    .replace(/^应对方向：\s*/, "")
+    .replace(/^优势\s*/, "")
+    .replace(/^劣势\s*/, "")
+    .replace(/\s*\/\s*/g, " · ");
+  if (value.length <= maxLength) return value;
+  const chunks = value.split(/[；;。]/).map((item) => item.trim()).filter(Boolean);
+  if (chunks[0] && chunks[0].length <= maxLength) return chunks[0];
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function refinedItems(slide, limit = 8) {
+  const seed = new Set(bullets(slide).map((item) => normalize(item)));
+  const blocked = new Set([normalize(slide.title), normalize(slide.originalTitle || "")]);
+  const selected = [];
+  for (const raw of textItems(slide)) {
+    const text = compactText(raw);
+    if (!text || text.length < 4) continue;
+    if (/^0\d$|^\d$|^PART\s+/i.test(text)) continue;
+    if (blocked.has(text) || seed.has(text)) continue;
+    if (selected.includes(text)) continue;
+    if (text.length < 8 && !/[A-Za-z0-9>]/.test(text)) continue;
+    selected.push(text);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+
+function mergeUnique(items) {
+  const seen = new Set();
+  const merged = [];
+  for (const raw of items) {
+    const text = compactText(raw, 1000);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    merged.push(text);
+  }
+  return merged;
+}
+
+function fullDetailItems(slide) {
+  return mergeUnique([...bullets(slide), ...refinedItems(slide, 80)]);
+}
+
+function refinementStrip(slide, limit = 5) {
+  const items = refinedItems(slide, limit);
+  if (!items.length) return "";
+  return `<section class="refined-strip">${items.map((item, i) => `<span style="--delay:${(i + 5) * 48}ms"><b>${String(i + 1).padStart(2, "0")}</b>${esc(item)}</span>`).join("")}</section>`;
 }
 
 function cardHtml(text, order) {
@@ -82,7 +122,7 @@ function cardHtml(text, order) {
 }
 
 function renderChapter(slide) {
-  const items = bullets(slide).slice(0, 4);
+  const items = [...bullets(slide), ...refinedItems(slide, 2)].slice(0, 4);
   return `<div class="chapter-layout">
     <div class="chapter-mark">PART ${partNo(slide)}</div>
     <h1>${esc(slide.title)}</h1>
@@ -92,7 +132,7 @@ function renderChapter(slide) {
 }
 
 function renderAgenda(slide) {
-  const items = bullets(slide).filter((item) => item.length > 4).slice(0, 8);
+  const items = [...bullets(slide), ...refinedItems(slide, 3)].filter((item) => item.length > 4).slice(0, 8);
   return `<div class="agenda-layout">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
     <div class="agenda-list">
@@ -118,37 +158,78 @@ function renderHero(slide) {
 }
 
 function renderTimeline(slide) {
-  const items = bullets(slide).slice(0, 4);
-  return `<div class="content-layout">
+  const items = fullDetailItems(slide);
+  const images = imageItems(slide);
+  return `<div class="content-layout ${images.length ? "image-priority" : ""}">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
-    <section class="timeline-row">${items.map((item, i) => cardHtml(item, i)).join("")}</section>
+    <section class="timeline-row complete-grid">${items.map((item, i) => cardHtml(item, i)).join("")}</section>
+    ${renderVisualPanel(images)}
   </div>`;
 }
 
 function renderLogicFlow(slide) {
   const items = bullets(slide).slice(0, 5);
-  return `<div class="content-layout logic-layout">
+  const details = refinedItems(slide, 80);
+  const images = imageItems(slide);
+  return `<div class="content-layout logic-layout ${images.length ? "image-priority" : ""}">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
     <section class="flow-line">${items.map((item, i) => {
       const [label, ...rest] = item.split("：");
       return `<article class="flow-node" style="--delay:${i * 70}ms"><em>${String(i + 1).padStart(2, "0")}</em><strong>${esc(label)}</strong><p>${esc(rest.join("：") || item)}</p></article>`;
     }).join("")}</section>
+    ${renderDetailGrid(details)}
+    ${renderVisualPanel(images)}
   </div>`;
 }
 
 function renderMatrix(slide, labels) {
   const items = bullets(slide).slice(0, labels.length || 4);
-  return `<div class="content-layout">
+  const details = refinedItems(slide, 80);
+  const images = imageItems(slide);
+  return `<div class="content-layout ${images.length ? "image-priority" : ""}">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
     <section class="matrix-grid">${items.map((item, i) => {
       const [label, ...rest] = item.split("：");
       return `<article class="matrix-card" style="--delay:${i * 70}ms"><span>${esc(labels[i] || String(i + 1).padStart(2, "0"))}</span><strong>${esc(label)}</strong><p>${esc(rest.join("：") || item)}</p></article>`;
     }).join("")}</section>
+    ${renderDetailGrid(details)}
+    ${renderVisualPanel(images)}
   </div>`;
 }
 
+function renderPlayerMap(slide) {
+  const rows = textItems(slide)
+    .map((item) => item.split("|").map((cell) => normalize(cell)).filter(Boolean))
+    .filter((row) => row.length >= 2);
+  const header = rows.find((row) => row[0] === "维度") || ["维度", "Waymo", "Tesla", "Wayve", "小鹏", "理想", "蔚来"];
+  const players = header.slice(1);
+  const fields = {};
+  for (const row of rows) {
+    if (row[0] === "维度") continue;
+    fields[row[0]] = row.slice(1);
+  }
+  return `<div class="content-layout player-layout">
+    <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
+    <section class="player-grid">${players.map((player, i) => `<article class="player-card" style="--delay:${i * 55}ms">
+      <h3>${esc(player)}</h3>
+      <strong>${esc(fields["模型形态"]?.[i] || "")}</strong>
+      <p>${esc(fields["技术本质"]?.[i] || "")}</p>
+      <dl>
+        <dt>能力</dt><dd>${esc(compactText(fields["核心能力"]?.[i] || "", 1000))}</dd>
+        <dt>优势</dt><dd>${esc(compactText(fields["优势"]?.[i] || "", 1000))}</dd>
+        <dt>局限</dt><dd>${esc(compactText(fields["局限"]?.[i] || "", 1000))}</dd>
+      </dl>
+    </article>`).join("")}</section>
+  </div>`;
+}
+
+function renderDetailGrid(items) {
+  if (!items.length) return "";
+  return `<section class="detail-grid">${items.map((item, i) => `<div style="--delay:${(i + 4) * 28}ms">${esc(item)}</div>`).join("")}</section>`;
+}
+
 function renderFlywheel(slide) {
-  const items = textItems(slide).filter((item) => item.length > 3).slice(0, 5);
+  const items = fullDetailItems(slide).filter((item) => item.length > 3).slice(0, 8);
   return `<div class="content-layout">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
     <section class="flywheel">${items.map((item, i) => `<article style="--i:${i};--delay:${i * 80}ms"><strong>${esc(item.split(" / ")[0])}</strong><p>${esc(item.split(" / ").slice(1).join(" · "))}</p></article>`).join("")}</section>
@@ -157,7 +238,7 @@ function renderFlywheel(slide) {
 
 function renderRoadmap(slide) {
   const items = bullets(slide).slice(0, 3);
-  const future = textItems(slide).slice(-6);
+  const future = refinedItems(slide, 80);
   return `<div class="content-layout roadmap-layout">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
     <section class="roadmap">${items.map((item, i) => `<article style="--delay:${i * 80}ms"><em>${["短期", "中期", "长期"][i] || ""}</em><strong>${esc(item)}</strong></article>`).join("")}</section>
@@ -178,6 +259,7 @@ function renderContent(slide) {
   if (slide.kind === "chapter") return renderChapter(slide);
   if (slide.layout === "timeline") return renderTimeline(slide);
   if (slide.layout === "logic-flow" || slide.layout === "cooperation-flow") return renderLogicFlow(slide);
+  if (slide.layout === "player-map") return renderPlayerMap(slide);
   if (slide.layout === "architecture-matrix") return renderMatrix(slide, ["模块化", "两段式", "端到端"]);
   if (slide.layout === "constraint-matrix") return renderMatrix(slide, ["算力", "数据", "迁移", "安全"]);
   if (slide.layout === "flywheel") return renderFlywheel(slide);
@@ -185,9 +267,9 @@ function renderContent(slide) {
 
   const items = textItems(slide);
   const images = imageItems(slide);
-  const hasVisual = images.length && slide.kind === "visual";
-  const visibleItems = items.slice(0, slide.kind === "dense" ? 24 : hasVisual ? 10 : 18);
-  const gridClass = slide.kind === "dense" ? "dense-grid" : hasVisual ? "split-grid" : "card-grid";
+  const visibleItems = fullDetailItems(slide);
+  const hasVisual = images.length > 0;
+  const gridClass = visibleItems.length > 24 ? "dense-grid ultra-grid" : slide.kind === "dense" ? "dense-grid" : hasVisual ? "split-grid" : "card-grid";
 
   return `<div class="content-layout ${hasVisual ? "has-visual" : ""}">
     <div class="slide-header"><span>${partNo(slide)}</span><h2>${esc(slide.title)}</h2></div>
@@ -195,8 +277,6 @@ function renderContent(slide) {
       ${visibleItems.map((item, i) => cardHtml(item, i)).join("")}
     </section>
     ${hasVisual ? renderVisualPanel(images) : ""}
-    <button class="appendix-trigger" data-slide="${slide.index - 1}">查看附录</button>
-    ${items.length > visibleItems.length ? `<div class="more-count">+${items.length - visibleItems.length} more details in source PPT</div>` : ""}
   </div>`;
 }
 
@@ -204,7 +284,6 @@ function render() {
   stage.innerHTML = slides.map((slide, slideIndex) => (
     `<article class="slide semantic-slide ${slide.kind}${slideIndex === index ? " current" : ""}" data-slide="${slideIndex}">
       ${renderContent(slide)}
-      ${slide.layout !== "hero" ? `<button class="appendix-trigger deck-level" data-slide="${slideIndex}">查看附录</button>` : ""}
     </article>`
   )).join("");
 }
@@ -228,18 +307,12 @@ document.getElementById("prev").addEventListener("click", () => go(index - 1));
 document.getElementById("next").addEventListener("click", () => go(index + 1));
 document.getElementById("openToc").addEventListener("click", () => toc.classList.add("open"));
 document.getElementById("closeToc").addEventListener("click", () => toc.classList.remove("open"));
-document.getElementById("closeAppendix").addEventListener("click", () => appendixDialog.close());
 
 document.querySelectorAll(".toc-item").forEach((button) => {
   button.addEventListener("click", () => {
     go(Number(button.dataset.goto));
     toc.classList.remove("open");
   });
-});
-
-stage.addEventListener("click", (event) => {
-  const trigger = event.target.closest(".appendix-trigger");
-  if (trigger) openAppendix(Number(trigger.dataset.slide));
 });
 
 window.addEventListener("keydown", (event) => {

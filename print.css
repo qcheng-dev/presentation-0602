@@ -15,8 +15,6 @@ body {
 .hud,
 .progress,
 .toc,
-.appendix-dialog,
-.appendix-trigger,
 .more-count {
   display: none !important;
 }
